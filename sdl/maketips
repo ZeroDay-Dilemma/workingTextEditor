@@ -1,0 +1,1 @@
+g++ -o myprogram thread-test.cpp `sdl2-config --cflags --libs -lSDL_image

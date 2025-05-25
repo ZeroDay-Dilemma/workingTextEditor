@@ -1,0 +1,108 @@
+doubly-linked list for managing line
+current: char array updated, should rework!
+
+in theory, only need to really have the working line editable fast
+
+gap buffer, like emacs
+gap buffer: store text in a giant array, with a gap of empty bytes in the middle
+    insert: write to those unused bytes
+    move cursor: move that gap up or down the array   O(n)!!!
+    delete: expands the gap
+
+alts: piece table, rope
+store buffer in chunks, and operate on those. avoid O(n) penalties
+
+
+
+vim uses a tree of large blocks, but this is inherited from vi?
+
+
+"Vim uses a fairly complex rope-like data structure with page-oriented blocks, which may be stored out-of-order in its swap file."
+also, vim's data blocks are gap buffers. see here there is a text start position and text end position + 1
+
+
+
+
+
+class editorLine {
+public:
+    editorLine(editorLine* prevLineA = nullptr, editorLine* nextLineA = nullptr)
+        : length(0), bufferSize(32), gapStart(0), gapEnd(31), prevLine(prevLineA), nextLine(nextLineA) {
+        text = new char[bufferSize];
+        std::fill(text, text + bufferSize, '\0'); // Initialize the buffer with null characters
+    }
+
+    ~editorLine() {
+        delete[] text;
+    }
+
+    // Insert character at the current position
+    void insertChar(char c) {
+        ensureGapSize(1); // Ensure gap has space for 1 character
+        text[gapStart++] = c; // Insert character into the gap
+    }
+
+    // Delete character at the current position
+    void deleteChar() {
+        if (gapStart > 0) {
+            gapStart--; // Move the start of the gap back
+        }
+    }
+
+    // Move the cursor position
+    void moveCursor(int newPos) {
+        if (newPos < 0 || static_cast<unsigned>(newPos) > length) return;
+        if (newPos < gapStart) {
+            // Move the gap left
+            int shift = gapStart - newPos;
+            std::memmove(text + gapEnd - shift + 1, text + newPos, shift);
+            gapEnd -= shift;
+            gapStart = newPos;
+        } else if (newPos > gapStart) {
+            // Move the gap right
+            int shift = newPos - gapStart;
+            std::memmove(text + gapStart, text + gapEnd + 1, shift);
+            gapEnd += shift;
+            gapStart = newPos;
+        }
+    }
+
+    // Get the current text as a string
+    std::string getText() const {
+        std::string result;
+        result.reserve(length);
+        result.append(text, gapStart);                 // Text before the gap
+        result.append(text + gapEnd + 1, bufferSize - gapEnd - 1); // Text after the gap
+        return result;
+    }
+
+    // Ensure the gap has at least `size` free slots
+    void ensureGapSize(unsigned int size) {
+        unsigned int gapSize = gapEnd - gapStart + 1;
+        if (gapSize >= size) return;
+
+        // Resize the buffer to accommodate more gap space
+        unsigned int newBufferSize = bufferSize * 2 + size;
+        char* newText = new char[newBufferSize];
+        unsigned int newGapEnd = newBufferSize - (bufferSize - gapEnd);
+
+        // Copy text before the gap
+        std::memcpy(newText, text, gapStart);
+        // Copy text after the gap
+        std::memcpy(newText + newGapEnd + 1, text + gapEnd + 1, bufferSize - gapEnd - 1);
+
+        // Update the gap and buffer properties
+        delete[] text;
+        text = newText;
+        gapEnd = newGapEnd;
+        bufferSize = newBufferSize;
+    }
+
+    unsigned int length;      // Logical length of the line
+    unsigned int bufferSize;  // Total size of the buffer
+    unsigned int gapStart;    // Start of the gap (cursor position)
+    unsigned int gapEnd;      // End of the gap
+    char* text;               // Text buffer with gap
+    editorLine* prevLine;     // Pointer to the previous line
+    editorLine* nextLine;     // Pointer to the next line
+};

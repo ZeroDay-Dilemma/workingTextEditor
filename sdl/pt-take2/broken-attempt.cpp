@@ -1,0 +1,646 @@
+#include <SDL2/SDL.h>
+#include <stdio.h>
+#include <iostream>
+#include <cstring>
+#include <fstream>
+#include <vector>
+#include <bitset>
+#include <string>
+#include <cstdint>
+
+SDL_Window* gWindow = NULL;
+
+//The surface contained by the window
+SDL_Surface* gScreenSurface = NULL;
+
+//The image we will load and show on the screen
+SDL_Surface* gHelloWorld = NULL;
+const uint32_t WINDOW_WIDTH = 800;//640;
+const uint32_t WINDOW_HEIGHT = 600;//480;
+
+bool running = true;
+const std::string FONTFILE = "myfont.wff";
+uint16_t FONT_NUM_PER_CHAR = 0;
+uint16_t FONT_WIDTH = 0;
+uint16_t FONT_HEIGHT =0;
+uint16_t NUM_CHARS_IN_FONT =0;
+char FONT_DATA_OFFSET=0x40;
+uint8_t FONT_SIZE = 2;
+uint32_t PREV_LINE_X=0;
+uint8_t LETTER_PADDING = 4;
+const uint32_t BYTES_PER_PIXEL = 4;
+int cmd_tracker=-1;
+uint8_t* fontData = nullptr;
+void drawCharacter(int offset, SDL_Renderer *renderer, unsigned int x, unsigned int y, unsigned int scale, uint32_t color=0xFFFFFFFF);
+void loadFontData(const std::string& binaryFile) {
+  std::ifstream inputFile(binaryFile, std::ios::binary);
+  if (!inputFile) {
+    std::cerr << "Failed to open binary file.\n";
+    return; 
+  }
+  inputFile.seekg(0, std::ios::beg); // Go to the start of the file
+  uint8_t byte1, byte2;
+  inputFile.read(reinterpret_cast<char*>(&byte1), 1); // Read first byte
+  inputFile.read(reinterpret_cast<char*>(&byte2), 1); // Read second byte
+  FONT_NUM_PER_CHAR = (static_cast<uint16_t>(byte1) << 8) | byte2; // Combine bytes to form uint16_t
+
+  // Read FONT_WIDTH (2 bytes)
+  inputFile.read(reinterpret_cast<char*>(&byte1), 1); 
+  inputFile.read(reinterpret_cast<char*>(&byte2), 1);
+  FONT_WIDTH = (static_cast<uint16_t>(byte1) << 8) | byte2;
+
+  // Read FONT_HEIGHT (2 bytes)
+  inputFile.read(reinterpret_cast<char*>(&byte1), 1); 
+  inputFile.read(reinterpret_cast<char*>(&byte2), 1);
+  FONT_HEIGHT = (static_cast<uint16_t>(byte1) << 8) | byte2;
+
+  // Read NUM_CHARS_IN_FONT (2 bytes)
+  inputFile.read(reinterpret_cast<char*>(&byte1), 1); 
+  inputFile.read(reinterpret_cast<char*>(&byte2), 1);
+  NUM_CHARS_IN_FONT = (static_cast<uint16_t>(byte1) << 8) | byte2;
+
+  // Step 2: Debug output for the font header data
+  std::cout << "FONT_NUM_PER_CHAR: " << FONT_NUM_PER_CHAR << std::endl;
+  std::cout << "FONT_WIDTH: " << FONT_WIDTH << std::endl;
+  std::cout << "FONT_HEIGHT: " << FONT_HEIGHT << std::endl;
+  std::cout << "NUM_CHARS_IN_FONT: " << NUM_CHARS_IN_FONT << std::endl;    // Step 2: Skip the header offset and go to the font data offset
+  inputFile.seekg(0, std::ios::beg);
+
+  // Step 3: Dynamically allocate memory for font data (each character has 18 bytes = 144 bits)
+  int totalFontSize = NUM_CHARS_IN_FONT * 18 + 8;  // Each character is 18 bytes (144 bits)
+  fontData = new uint8_t[totalFontSize];
+
+  // Step 4: Read the font data into the allocated memory
+  inputFile.read(reinterpret_cast<char*>(fontData), totalFontSize);
+
+  inputFile.close();
+}
+/*
+void drawCursor(SDL_Renderer *renderer, char* textBuffer, int& bufferPos){
+  SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
+  for (int i = 0; i < FONT_HEIGHT*FONT_SIZE; i++){ 
+    SDL_RenderDrawPoint(renderer, CURSOR[0], CURSOR[1]+i);
+  }
+  uint8_t toPrint = textBuffer[bufferPos];
+   if( (toPrint>=65 && toPrint<=90) || (toPrint>=97 && toPrint<=122) ){
+    //its a letter
+
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+    for (int i = 0; i < FONT_HEIGHT*FONT_SIZE; i++){ 
+      SDL_RenderDrawPoint(renderer, PREV_CURSOR[0]-(FONT_WIDTH*FONT_SIZE+2), PREV_CURSOR[1]+i);
+    }  
+  }
+
+  else if(textBuffer[bufferPos]=='\0' || textBuffer[bufferPos-1]=='\n'){
+    SDL_SetRenderDrawColor(renderer, 0,0, 0, 255);
+    for (int i = 0; i < FONT_HEIGHT*FONT_SIZE; i++){
+      SDL_RenderDrawPoint(renderer, PREV_CURSOR[0], PREV_CURSOR[1]+i);
+    }
+  }
+
+}
+void drawCharacter_Helper(uint8_t toPrint, char* textBuffer, int& bufferPos, SDL_Renderer *renderer){
+  //handle special characters first:
+
+  if( (toPrint>=33 && toPrint<=126) ){
+    //its a letter
+
+    drawCharacter((toPrint), renderer, CURSOR[0], CURSOR[1], FONT_SIZE);
+  } 
+  else if (toPrint == '\0'){
+printf("letter");
+    drawCharacter(0, renderer, CURSOR[0], CURSOR[1], FONT_SIZE, 0x000000FF);
+
+  }
+}
+*/
+
+
+void drawCharacter(int offset, SDL_Renderer *renderer, unsigned int x, unsigned int y, unsigned int scale, uint32_t color){  
+
+  //width of 5, height of 6. render from top left corner;
+  //std::cout<<((color&(0xFF<<24))>>24)<<" "<<(color&(0xFF<<16))<<" "<<(color&(0xFF<<8))<<" "<<(color&(0xFF))<<std::endl;
+
+  SDL_SetRenderDrawColor(renderer, (color&(0xFF<<24))>>24, (color&(0xFF<<16))>>16, (color&(0xFF<<8))>>8,(color&(0xFF)));
+  for (unsigned int i = 0; i<(FONT_HEIGHT*scale);i++){ //print a row
+    for (unsigned int j = 0; j<(FONT_WIDTH*scale); j++){ //print each in row
+      int row = i/scale;
+      int col = j/scale;
+
+      // Calculate the bit index in the font data
+      int bitIndex = row * FONT_WIDTH + col;
+      //std::cout<<bitIndex%8<<std::endl;
+      //starting array = (offset*FONT_NUM_PER_CHAR + FONT_DATA_OFFSET)/8; 
+
+      // Access the corresponding byte from fontData
+      int byteIndex=(offset * FONT_NUM_PER_CHAR + FONT_DATA_OFFSET)/8 + (bitIndex / 8);
+
+      //std::cout<<"  "<<byteIndex<<" ";
+
+      int bitPosition = 7 - (bitIndex % 8); // bit position within the byte (0-7)
+      //std::cout<<bitIndex<<" "<<byteIndex<<" "<<bitPosition<<" "<<std::endl;
+      if (offset==0){
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+        SDL_RenderDrawPoint(renderer, x+j,y+i);
+      }
+      else if (offset<0){//draw inverse on neg offset
+        if (fontData[byteIndex] & (0 << bitPosition)) {
+          if(x+j<=WINDOW_WIDTH && y+i<=WINDOW_HEIGHT){ //ensure bounds
+            SDL_RenderDrawPoint(renderer, x+j,y+i);
+          }
+        }
+      }else{
+        if (fontData[byteIndex] & (1 << bitPosition)) {
+          if(x+j<=WINDOW_WIDTH && y+i<=WINDOW_HEIGHT){ //ensure bounds
+            SDL_RenderDrawPoint(renderer, x+j,y+i);
+
+          }
+          else{
+            printf("failed: on %d\n",offset);
+          }
+        }
+        else{
+          //printf("0");
+        }
+      }
+      //printf("\n");
+    }
+
+
+  }
+}
+
+
+void freeFontData() {
+  delete[] fontData;
+  fontData = nullptr;
+  std::cout << "Font data memory freed.\n";
+}
+
+
+class editorLine{
+public:
+
+  editorLine(editorLine *prevLineA = nullptr, editorLine *nextLineA = nullptr){
+    length = 127;
+    bufferPos=0;
+    text = new char[128]{0,'\0'};
+
+    prevLine = prevLineA;
+    nextLine = nextLineA;
+  }
+  ~editorLine() {
+    delete[] text; // Free the dynamically allocated text array
+  }
+  unsigned int length;
+  unsigned int bufferPos;
+  char *text;
+  editorLine *prevLine;
+  editorLine *nextLine;
+  uint16_t multiline=0;
+
+};
+
+class editorInfo{
+public:
+  editorInfo(editorLine *topOfFileA){
+    unsigned int tmp=0;
+    topOfFile = topOfFileA;
+    workingLine = topOfFileA;
+    while (topOfFileA->nextLine!=nullptr){
+      topOfFileA = topOfFileA->nextLine;
+      tmp++;
+    }
+    numLines=tmp;
+    currentLine=0;
+    currentCol=0;
+    std::cout<<" MAX: "<<(FONT_SIZE*FONT_WIDTH+LETTER_PADDING)<<"\n result: "<<(WINDOW_WIDTH/(FONT_SIZE*FONT_WIDTH+LETTER_PADDING))<<std::endl;
+    maxCharsPerLine = static_cast<uint32_t>(WINDOW_WIDTH/(FONT_SIZE*FONT_WIDTH +LETTER_PADDING));
+    maxCharsPerLine -= 1; //for line marker!
+  //std::cout<<"TMAX: "<<maxCharsPerLine<<std::endl;
+    
+  }
+  ~editorInfo() {
+    editorLine* current = topOfFile;
+    while (current != nullptr) {
+      editorLine* toDelete = current;
+      current = current->nextLine;
+      delete toDelete; // Automatically calls ~editorLine()
+    }
+  }
+  void insertNewLine(){
+    // Ensure we are at the correct position to insert a new line (bufferPos)
+    if (workingLine == nullptr) return;
+
+    // Create a new line after the current workingLine
+    editorLine* newLine = new editorLine(workingLine, workingLine->nextLine);
+    if (workingLine->nextLine != nullptr) {
+      workingLine->nextLine->prevLine = newLine;
+    }
+    workingLine->nextLine = newLine;
+
+    // Transfer the text after the bufferPos to the new line
+    // This is the part of the text that goes into the new line
+    unsigned int textLen = workingLine->length;
+    if (workingLine->bufferPos < textLen) {
+      unsigned int textSize = textLen - workingLine->bufferPos;
+      newLine->text = new char[textSize + 1];  // +1 for null terminator
+      std::copy(workingLine->text + workingLine->bufferPos, workingLine->text + textLen, newLine->text);
+      newLine->text[textSize] = '\0'; // Null-terminate the string
+      newLine->length = textSize;  // Set the new line's length
+
+      // Truncate the original line's text
+      workingLine->length = workingLine->bufferPos;
+      workingLine->text[workingLine->bufferPos] = '\0'; // Truncate text
+    }
+    // Set the workingLine to the new line
+    workingLine = newLine;
+    // Update number of lines
+    numLines++;
+    currentLine++;
+  }
+  void deleteLine() {
+    // Ensure we're at the start of the line to delete it (bufferPos == 0)
+    if (workingLine == nullptr || workingLine->bufferPos != 0) return;
+
+    // Ensure we are not deleting the top line (don't allow deletion if there's no previous line)
+    if (workingLine->prevLine == nullptr) return;
+
+    // The line before the current one will now take the text from the current line
+    editorLine* prev = workingLine->prevLine;
+
+    // Move the text from the current line to the previous line
+    unsigned int prevTextLen = prev->length;
+    unsigned int currTextLen = workingLine->length;
+    char* newText = new char[prevTextLen + currTextLen + 1];  // +1 for null terminator
+
+    // Copy the previous line's text into the newText
+    std::copy(prev->text, prev->text + prevTextLen, newText);
+    // Copy the current line's text into the newText
+    std::copy(workingLine->text, workingLine->text + currTextLen, newText + prevTextLen);
+
+    // Null-terminate the newText
+    newText[prevTextLen + currTextLen] = '\0';
+
+    // Assign the new text to the previous line
+    delete[] prev->text; // Free the old text
+    prev->text = newText;
+    prev->length = prevTextLen + currTextLen;  // Update the previous line's length
+
+    // Adjust the links: delete the current line and update the workingLine
+    prev->nextLine = workingLine->nextLine;
+    if (workingLine->nextLine != nullptr) {
+      workingLine->nextLine->prevLine = prev;
+    }
+
+    // Delete the current line
+    delete workingLine;
+    currentLine--;
+
+    // Update workingLine to be the previous line
+    workingLine = prev;
+    // Update number of lines
+    numLines--;
+  }
+  void updateMultiLine(){
+    printf("newline stuffs\n");
+    workingLine->multiline = workingLine->length % maxCharsPerLine;
+  }
+
+
+  unsigned int currentLine;
+  unsigned int currentCol;
+  unsigned int numLines;
+  editorLine *topOfFile;
+  editorLine *workingLine;
+  bool needUpdate = false;
+  uint32_t maxCharsPerLine = 0;
+};
+
+
+
+
+void fullScreenDraw(editorInfo *edInfo, SDL_Renderer * renderer);
+bool init()
+{
+  //Initialization flag
+  bool success = true;
+
+  //Initialize SDL
+  if( SDL_Init( SDL_INIT_VIDEO ) < 0 )
+  {
+    printf( "SDL could not initialize! SDL_Error: %s\n", SDL_GetError() );
+    success = false;
+  }
+  else
+{
+    //Create window
+    gWindow = SDL_CreateWindow( "SDL Tutorial", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, WINDOW_WIDTH, WINDOW_HEIGHT, SDL_WINDOW_SHOWN );
+    if( gWindow == NULL )
+    {
+      printf( "Window could not be created! SDL_Error: %s\n", SDL_GetError() );
+      success = false;
+    }
+    else
+  {
+      //Get window surface
+      gScreenSurface = SDL_GetWindowSurface( gWindow );
+    }
+  }
+
+  return success;
+}
+
+
+void close(editorInfo *infoToDelete, SDL_Renderer *renderer)
+{
+  printf("\nfreeing memory....");
+  delete infoToDelete;
+  //  editorLine *tmp = infoToDelete->topOfFile;
+  //  while(tmp != nullptr){
+  //    delete[] tmp->text;
+  //    delete tmp->prevLine;
+  //    tmp=tmp->nextLine;
+  //  }
+  freeFontData();
+  infoToDelete = nullptr;
+
+  // SDL cleanup
+  if (renderer) {
+    SDL_DestroyRenderer(renderer);
+    renderer = nullptr;
+  }
+
+  if (gHelloWorld) {
+    SDL_FreeSurface(gHelloWorld);
+    gHelloWorld = NULL;
+  }
+
+  if (gWindow) {
+    SDL_DestroyWindow(gWindow);
+    gWindow = NULL;
+  }
+
+  // Quit SDL subsystems
+  SDL_Quit();
+}
+
+
+
+
+void handleInput(SDL_Event& event, editorInfo *edInfo, SDL_Renderer *renderer) {
+  if (event.type == SDL_TEXTINPUT) {
+    edInfo->needUpdate=true;
+    size_t textLength = strlen(event.text.text);
+    // Append text to the buffer if there's space
+    //if (bufferPos + strlen(event.text.text) < BUFFER_SIZE - 1) {
+    //  strcat(textBuffer, event.text.text); // Concatenate input to the buffer
+    //  bufferPos += strlen(event.text.text); // Update buffer position
+    //  //check for command attempt
+    //if(edInfo->currentLine->bufferPos + strlen(event.text.next) < edInfo->currentLine->length -1){
+    //no need to manage mem, slot in!
+    memmove(edInfo->workingLine->text + edInfo->workingLine->bufferPos + textLength,
+            edInfo->workingLine->text + edInfo->workingLine->bufferPos,
+            edInfo->workingLine->length - edInfo->workingLine->bufferPos);
+
+    // Insert the new text at the buffer position
+    strncpy(edInfo->workingLine->text + edInfo->workingLine->bufferPos, event.text.text, textLength);
+
+    // Update bufferPos and length
+    edInfo->workingLine->bufferPos += textLength;
+    edInfo->workingLine->length += textLength;
+
+    edInfo->updateMultiLine();
+    fullScreenDraw(edInfo, renderer);
+    //strcat(edInfo->workingLine->text, event.text.text);
+    //edInfo->workingLine->bufferPos += strlen(event.text.text);
+    //edInfo->workingLine->length += strlen(event.text.text);
+    //}
+
+  } else if (event.type == SDL_KEYDOWN) {
+
+    edInfo->needUpdate=true;
+    // Handle special keys
+    switch (event.key.keysym.sym) {
+      case SDLK_UP:
+        //TODO TODO TODO
+        if(edInfo->workingLine->prevLine != nullptr){
+          unsigned int tmp = edInfo->workingLine->bufferPos;
+          edInfo->workingLine = edInfo->workingLine->prevLine;
+          edInfo->workingLine->bufferPos = (tmp < edInfo->workingLine->length) ? tmp : edInfo->workingLine->length;
+        }
+        break;
+      case SDLK_DOWN: 
+
+        break;
+      case SDLK_LEFT:
+        if(edInfo->workingLine->bufferPos  >=1){
+          edInfo->workingLine->bufferPos--;
+          //          SDL_SetRenderDrawColor(renderer,0,255,0,255);
+          //          SDL_RenderDrawPoint(renderer,50,50);
+        }
+        else if (edInfo->workingLine->bufferPos==0){
+          //printf("SLAAAYYYY");
+          if(edInfo->workingLine->prevLine != nullptr){
+            edInfo->workingLine=edInfo->workingLine->prevLine;
+            edInfo->workingLine->bufferPos=edInfo->workingLine->length;
+            edInfo->currentLine--;
+          }
+        } 
+        break;
+      case SDLK_RIGHT:
+        if(edInfo->workingLine->bufferPos<=edInfo->workingLine->length-1){
+          edInfo->workingLine->bufferPos++;
+        }
+        else if (edInfo->workingLine->bufferPos==edInfo->workingLine->length){
+          if(edInfo->workingLine->nextLine != nullptr){
+            edInfo->workingLine=edInfo->workingLine->nextLine;
+            edInfo->workingLine->bufferPos=edInfo->workingLine->length;
+            edInfo->currentLine++;
+          }
+        } 
+
+        break;
+
+      case SDLK_BACKSPACE:
+        if(edInfo->workingLine->bufferPos==0 ){ //at start of line, delete it! 
+          edInfo->deleteLine();
+        }
+        else{
+          edInfo->workingLine->text[-- (edInfo->workingLine-> bufferPos)] = '\0';
+        }
+        break;
+      case SDLK_RETURN:
+        edInfo->insertNewLine(); 
+        break;
+      case SDLK_TAB:
+
+        break;
+      case SDLK_ESCAPE:
+        std::cout << "Escape pressed, exiting." << std::endl;
+        running = false;
+      //exit(0); // Exit program
+      default:
+        break;
+    }
+  }
+}
+
+
+void drawString(const char* text, editorInfo *edInfo, SDL_Renderer* renderer, int x, int y) {
+  // Iterate through each character in the C-string (until null-terminator)
+  uint16_t defX = x;
+  for (size_t i = 0; text[i] != '\0'; ++i) {
+    // Call drawCharacter on each character
+    std::cout<<"drawString()"<<std::endl;
+    std::cout<<edInfo->maxCharsPerLine<<  std::endl; 
+    if(i%edInfo->maxCharsPerLine == 0 && i!=0){
+      std::cout<<"++"<<std::endl;
+      y+=(FONT_SIZE*FONT_HEIGHT);
+    }  
+    drawCharacter(text[i], renderer,(x + ((i%edInfo->maxCharsPerLine) * (FONT_WIDTH + FONT_SIZE + LETTER_PADDING))), y, FONT_SIZE);
+    
+  }
+}
+
+void drawNumber(unsigned int number, editorInfo *edInfo,SDL_Renderer* renderer, int x, int y) {
+  // Convert number to string and iterate over each character
+  std::string numberStr = std::to_string(number);
+  for (size_t i = 0; i < numberStr.length(); ++i) {
+    if(i%edInfo->maxCharsPerLine == 0 && i!=0){
+      y+=(FONT_SIZE*FONT_HEIGHT);
+    }
+    drawCharacter(numberStr[i], renderer, x + (i * (FONT_WIDTH + FONT_SIZE + LETTER_PADDING))%edInfo->maxCharsPerLine, y, FONT_SIZE);
+    
+  }
+}
+
+void printDebug(editorInfo *edInfo, SDL_Renderer * renderer){
+  drawCharacter('b', renderer, 50, 50,2);
+  drawCharacter(':', renderer, 50+(FONT_WIDTH+FONT_SIZE+2), 50,2);
+  drawCharacter(0, renderer, 50+(2*(FONT_WIDTH+FONT_SIZE+2)), 50,2,0x000000FF);
+  drawCharacter(0, renderer, 50+(3*(FONT_WIDTH+FONT_SIZE+2)), 50,2,0x000000FF);
+
+  drawNumber(edInfo->workingLine->bufferPos, edInfo, renderer, 50+(2*(FONT_WIDTH+FONT_SIZE+2)), 50);
+}
+
+
+void fullScreenDraw(editorInfo *edInfo, SDL_Renderer * renderer){
+  //wipe screen
+  SDL_SetRenderDrawColor(renderer,0,0,0,255);  
+  SDL_RenderClear(renderer);
+  //draw characters top:
+  uint16_t BonusOffSet = 0;
+  editorLine * tmp = edInfo->topOfFile;
+  uint16_t iterator = 0;
+  //printf("\nnjnjfonofjfajikbjsgogj");
+  while (tmp != nullptr){
+    if (tmp->multiline != 0);
+    //iterating a line
+    if (iterator==edInfo->currentLine){
+      drawCharacter(58,renderer,0, iterator * FONT_SIZE * FONT_HEIGHT, 2);
+    }
+
+    drawString(tmp->text, edInfo, renderer, FONT_SIZE*FONT_WIDTH, iterator * FONT_SIZE * FONT_HEIGHT );  
+    iterator+=1 + tmp->multiline;
+    tmp = tmp->nextLine;
+  }
+
+}
+
+
+void printScreenFull(editorInfo *edInfo, SDL_Renderer * renderer){
+  if (edInfo->needUpdate){ 
+    system("clear");
+    SDL_RenderPresent(renderer);
+    editorLine *tmp = edInfo->topOfFile;
+    unsigned int itr = 0;
+    while(tmp != nullptr){ 
+      if (itr==edInfo->currentLine){
+        std::cout<<":";
+        for(unsigned int t =0; t<edInfo->workingLine->length;t++){
+          if (t == edInfo->workingLine->bufferPos){
+
+            printf("%c[%dm",'\033',42);
+            printf("%c",' ');
+            printf("%c[%dm",'\033',0);
+          }
+          std::cout<< tmp->text[t];
+
+
+        }
+        std::cout<<std::endl;
+      }
+      else{
+        std::cout<< tmp->text<<std::endl;
+      }
+      tmp=tmp->nextLine;
+      itr++;
+    }
+  }
+  edInfo->needUpdate = false;
+}
+
+
+int main( int argc, char* args[] )
+{
+  //printf("rgbtest: %d\n",rgbToInt(255,0,0));
+  //Start up SDL and create window
+  editorInfo *currentFile;
+  SDL_Renderer *renderer;
+  if( !init() )
+  {
+    printf( "Failed to initialize!\n" );
+  }
+  else
+{
+    renderer = SDL_CreateRenderer(gWindow, -1, SDL_RENDERER_SOFTWARE);
+    //SDL_SetRenderDrawColor(renderer,0,0,0,255);
+
+    SDL_RenderClear(renderer);
+    //SDL_RenderPresent(renderer); 
+    //assuming blank file  
+
+    loadFontData(FONTFILE);
+    if (fontData==nullptr) {
+      return 1;
+    }
+    printf("paasses!");
+
+    currentFile= new editorInfo(new editorLine());
+    unsigned int prevSize = 1;
+    // Main loop
+    while (running) {
+      SDL_Event event;
+
+      // Poll events
+      while (SDL_PollEvent(&event)) {
+        if (event.type == SDL_QUIT) {
+          running = false;
+          printf("hit");
+        } else {
+          // Pass events to the input handler
+          handleInput(event, currentFile, renderer);
+        }
+
+      }
+
+      //printDebug(currentFile, renderer);
+
+      printScreenFull(currentFile, renderer);
+      //if (prevLoc != bufferPos){
+      //system("clear"); 
+      //std::cout << textBuffer << std::endl;
+      //SDL_RenderPresent(renderer);
+      //prevLoc=bufferPos;
+      //}
+    }
+  }
+  ///////////////////////
+  //SDL_Delay(4000);
+  printf("hit");
+  //Free resources and close SDL
+  close(currentFile, renderer);
+
+  return 0;
+}
